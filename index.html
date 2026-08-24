@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ThoughtSpot Embed Playground</title>
+  <style>
+    :root {
+      --bg: #0f1420;
+      --panel: #171d2e;
+      --panel-2: #1e2740;
+      --border: #2b3452;
+      --text: #dfe6f5;
+      --muted: #8b97b5;
+      --accent: #4f8cff;
+      --accent-2: #7c5cff;
+      --ok: #35c98a;
+      --warn: #ffb454;
+      --err: #ff5f6e;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      display: grid; grid-template-columns: 360px 1fr; height: 100vh;
+    }
+    /* ---- Sidebar ---- */
+    aside {
+      background: var(--panel); border-right: 1px solid var(--border);
+      overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px;
+    }
+    aside h1 { font-size: 15px; margin: 0; display: flex; align-items: center; gap: 8px; }
+    aside h1 .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); transition: background .2s; }
+    aside h1 .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    aside h1 .dot.err { background: var(--err); box-shadow: 0 0 8px var(--err); }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+    .field .hint { font-size: 11px; color: var(--muted); }
+    input, select, textarea {
+      background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+      border-radius: 7px; padding: 8px 10px; font: inherit; width: 100%;
+    }
+    textarea { resize: vertical; min-height: 60px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin: 0; }
+    fieldset legend { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; padding: 0 6px; }
+    .checks { display: flex; flex-direction: column; gap: 6px; }
+    .checks label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); text-transform: none; letter-spacing: 0; }
+    .checks input { width: auto; }
+    .btns { display: flex; gap: 8px; position: sticky; bottom: 0; padding-top: 6px; background: var(--panel); }
+    button {
+      flex: 1; border: none; border-radius: 8px; padding: 10px; font: inherit; font-weight: 600;
+      cursor: pointer; color: #fff; background: var(--accent);
+    }
+    button.secondary { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); }
+    button:hover { filter: brightness(1.1); }
+    button:active { transform: translateY(1px); }
+    .hide { display: none !important; }
+    /* ---- Main ---- */
+    main { display: grid; grid-template-rows: 1fr 220px; overflow: hidden; }
+    #embed-container { background: #fff; overflow: auto; position: relative; }
+    #embed-container .placeholder {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      color: #9aa3b8; background: var(--bg); font-size: 14px; text-align: center; padding: 40px;
+    }
+    #log-panel { background: var(--panel); border-top: 1px solid var(--border); display: flex; flex-direction: column; }
+    #log-head { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-bottom: 1px solid var(--border); }
+    #log-head span { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+    #log-head button { flex: none; padding: 4px 10px; font-size: 11px; font-weight: 500; }
+    #log { flex: 1; overflow-y: auto; padding: 6px 12px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+    .log-line { display: flex; gap: 8px; padding: 1px 0; border-bottom: 1px solid rgba(255,255,255,.03); }
+    .log-line .t { color: var(--muted); flex: none; }
+    .log-line .k { flex: none; font-weight: 600; }
+    .log-line.info .k { color: var(--accent); }
+    .log-line.ok   .k { color: var(--ok); }
+    .log-line.warn .k { color: var(--warn); }
+    .log-line.err  .k { color: var(--err); }
+    .log-line .m { color: var(--text); word-break: break-word; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <aside>
+    <h1><span class="dot" id="status-dot"></span> ThoughtSpot Embed Playground</h1>
+
+    <div class="field">
+      <label for="host">Cluster URL</label>
+      <input id="host" placeholder="https://my-cluster.thoughtspot.cloud" autocomplete="off" />
+      <span class="hint">The <code>thoughtSpotHost</code>. No trailing path.</span>
+    </div>
+
+    <div class="field">
+      <label for="authType">Auth type</label>
+      <select id="authType">
+        <option value="None">None — rely on an existing session</option>
+        <option value="Basic">Basic — username + password (dev only)</option>
+        <option value="AuthServer">TrustedAuthToken — token, cookie-based</option>
+        <option value="AuthServerCookieless">TrustedAuthTokenCookieless — token, no cookie</option>
+        <option value="SSO">SSO / SAML — full-page redirect</option>
+        <option value="OIDC">OIDC — full-page redirect</option>
+      </select>
+      <span class="hint" id="authHint"></span>
+    </div>
+
+    <!-- Basic auth -->
+    <fieldset id="fs-basic" class="hide">
+      <legend>Basic credentials</legend>
+      <div class="field"><label>Username</label><input id="basicUser" autocomplete="off" /></div>
+      <div class="field" style="margin-top:8px"><label>Password</label><input id="basicPass" type="password" autocomplete="off" /></div>
+    </fieldset>
+
+    <!-- Token auth (both trusted variants) -->
+    <fieldset id="fs-token" class="hide">
+      <legend>Trusted token source</legend>
+      <div class="field"><label>Username (optional)</label><input id="tokenUser" autocomplete="off" /></div>
+      <div class="field" style="margin-top:8px">
+        <label>Token source</label>
+        <select id="tokenSource">
+          <option value="endpoint">Auth endpoint URL (SDK fetches token)</option>
+          <option value="paste">Paste a token (getAuthToken returns it)</option>
+        </select>
+      </div>
+      <div class="field" id="fs-endpoint" style="margin-top:8px">
+        <label>Auth endpoint</label>
+        <input id="authEndpoint" placeholder="https://your-auth-server/ts-token" autocomplete="off" />
+        <span class="hint">Your server returns a bearer token as plain text.</span>
+      </div>
+      <div class="field hide" id="fs-paste" style="margin-top:8px">
+        <label>Token</label>
+        <textarea id="pasteToken" placeholder="Paste a token from POST /api/rest/2.0/auth/token/full"></textarea>
+        <span class="hint">See <code>token-server.mjs</code> in the repo to mint one.</span>
+      </div>
+    </fieldset>
+
+    <div class="field">
+      <label for="embedType">Embed type</label>
+      <select id="embedType">
+        <option value="Liveboard">Liveboard</option>
+        <option value="Search">Search / Answer</option>
+        <option value="SearchBar">Search Bar</option>
+        <option value="App">Full App</option>
+        <option value="Spotter">Spotter (Conversation)</option>
+      </select>
+    </div>
+
+    <div class="field" id="fs-content">
+      <label for="contentId" id="contentLabel">Liveboard ID</label>
+      <input id="contentId" autocomplete="off" />
+      <span class="hint" id="contentHint"></span>
+    </div>
+
+    <fieldset>
+      <legend>Cookie / behaviour flags</legend>
+      <div class="checks">
+        <label><input type="checkbox" id="suppressNoCookie" /> suppressNoCookieAccessAlert</label>
+        <label><input type="checkbox" id="detectCookie" /> detectCookieAccessSlow</label>
+        <label><input type="checkbox" id="disableRedirect" /> disableLoginRedirect</label>
+      </div>
+    </fieldset>
+
+    <div class="btns">
+      <button id="run">Initialize &amp; Render</button>
+      <button id="logout" class="secondary" style="flex:.55">Logout</button>
+    </div>
+  </aside>
+
+  <main>
+    <div id="embed-container"><div class="placeholder">Configure a cluster on the left and click <b style="margin:0 4px">Initialize &amp; Render</b> to embed.</div></div>
+    <div id="log-panel">
+      <div id="log-head">
+        <span>Event log — auth status &amp; iframe events</span>
+        <button class="secondary" id="clearLog">clear</button>
+      </div>
+      <div id="log"></div>
+    </div>
+  </main>
+
+  <script type="module">
+    import {
+      init, AuthType, AuthStatus, EmbedEvent, HostEvent,
+      LiveboardEmbed, SearchEmbed, SearchBarEmbed, AppEmbed, SpotterEmbed,
+    } from 'https://cdn.jsdelivr.net/npm/@thoughtspot/visual-embed-sdk@1.51.0/dist/tsembed.es.js';
+
+    // Expose for console tinkering while you explore.
+    window.TsEmbedSDK = { init, AuthType, AuthStatus, EmbedEvent, HostEvent };
+
+    const $ = (id) => document.getElementById(id);
+    const logEl = $('log');
+    const dot = $('status-dot');
+
+    // ---------- Event log ----------
+    function log(kind, key, msg) {
+      const line = document.createElement('div');
+      line.className = `log-line ${kind}`;
+      const t = new Date().toLocaleTimeString();
+      const m = msg == null ? '' : (typeof msg === 'string' ? msg : JSON.stringify(msg));
+      line.innerHTML = `<span class="t">${t}</span><span class="k">${key}</span><span class="m"></span>`;
+      line.querySelector('.m').textContent = m;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+    $('clearLog').onclick = () => { logEl.innerHTML = ''; };
+
+    // ---------- Config persistence (survives SSO/OIDC page reloads) ----------
+    const FIELDS = ['host','authType','basicUser','basicPass','tokenUser','tokenSource',
+      'authEndpoint','pasteToken','embedType','contentId'];
+    const CHECKS = ['suppressNoCookie','detectCookie','disableRedirect'];
+    const STORE = 'ts-embed-playground';
+    function saveCfg() {
+      const c = {};
+      FIELDS.forEach((f) => { c[f] = $(f).value; });
+      CHECKS.forEach((f) => { c[f] = $(f).checked; });
+      localStorage.setItem(STORE, JSON.stringify(c));
+    }
+    function loadCfg() {
+      let c; try { c = JSON.parse(localStorage.getItem(STORE)) || {}; } catch { c = {}; }
+      FIELDS.forEach((f) => { if (c[f] != null) $(f).value = c[f]; });
+      CHECKS.forEach((f) => { if (c[f] != null) $(f).checked = c[f]; });
+    }
+
+    // ---------- Dynamic form ----------
+    const AUTH_HINTS = {
+      None: 'No SDK login. The iframe uses whatever session already exists (or public content).',
+      Basic: 'POSTs username/password to /callosum/v1/session/login. Sets a cookie. Dev/testing only.',
+      AuthServer: 'Fetches a token, POSTs it to /session/login/token → session COOKIE. Fragile under 3rd-party cookie blocking.',
+      AuthServerCookieless: 'Fetches a token and injects it into the iframe via postMessage. No cookie — the recommended embed path.',
+      SSO: 'Redirects the WHOLE PAGE to /callosum/v1/saml/login, then back. Config is restored from localStorage after the round-trip.',
+      OIDC: 'Redirects the WHOLE PAGE to /callosum/v1/oidc/login (forceSAMLAutoRedirect=true), then back.',
+    };
+    const CONTENT = {
+      Liveboard: ['Liveboard ID', 'GUID of the Liveboard to open.'],
+      Search:    ['Data source ID (optional)', 'Worksheet/Model GUID to search against. Blank = pick in-app.'],
+      SearchBar: ['Data source ID', 'Worksheet/Model GUID the search bar queries.'],
+      App:       ['Landing path (optional)', 'e.g. "/home", "/pinboards". Blank = default home.'],
+      Spotter:   ['Worksheet / Model ID', 'GUID of the data source Spotter converses over. Required.'],
+    };
+    function syncForm() {
+      const at = $('authType').value;
+      $('authHint').textContent = AUTH_HINTS[at] || '';
+      $('fs-basic').classList.toggle('hide', at !== 'Basic');
+      $('fs-token').classList.toggle('hide', at !== 'AuthServer' && at !== 'AuthServerCookieless');
+      const paste = $('tokenSource').value === 'paste';
+      $('fs-endpoint').classList.toggle('hide', paste);
+      $('fs-paste').classList.toggle('hide', !paste);
+      const [lbl, hint] = CONTENT[$('embedType').value] || ['Content ID', ''];
+      $('contentLabel').textContent = lbl;
+      $('contentHint').textContent = hint;
+    }
+    ['authType','tokenSource','embedType'].forEach((id) => $(id).addEventListener('change', syncForm));
+    FIELDS.concat(CHECKS).forEach((id) => $(id).addEventListener('change', saveCfg));
+
+    // ---------- Build embedConfig from the form ----------
+    function buildConfig() {
+      const authType = $('authType').value;
+      const cfg = {
+        thoughtSpotHost: $('host').value.trim().replace(/\/+$/, ''),
+        authType,
+        suppressNoCookieAccessAlert: $('suppressNoCookie').checked,
+        detectCookieAccessSlow: $('detectCookie').checked,
+        disableLoginRedirect: $('disableRedirect').checked,
+        logLevel: 'INFO',
+      };
+      if (authType === 'Basic') {
+        cfg.username = $('basicUser').value.trim();
+        cfg.password = $('basicPass').value;
+      }
+      if (authType === 'AuthServer' || authType === 'AuthServerCookieless') {
+        const user = $('tokenUser').value.trim();
+        if (user) cfg.username = user;
+        if ($('tokenSource').value === 'paste') {
+          const tok = $('pasteToken').value.trim();
+          cfg.getAuthToken = () => Promise.resolve(tok);
+        } else {
+          cfg.authEndpoint = $('authEndpoint').value.trim();
+        }
+      }
+      return cfg;
+    }
+
+    // ---------- Wire the init() auth emitter ----------
+    function wireAuth(authEE) {
+      authEE
+        .on(AuthStatus.SDK_SUCCESS, () => { dot.className = 'dot ok'; log('ok', 'SDK_SUCCESS', 'auth passed in parent window; iframe not loaded yet'); })
+        .on(AuthStatus.SUCCESS, (info) => { dot.className = 'dot ok'; log('ok', 'SUCCESS', info && (info.userGUID || info.userName) ? `user=${info.userName || info.userGUID}` : 'session active'); })
+        .on(AuthStatus.FAILURE, (type) => { dot.className = 'dot err'; log('err', 'FAILURE', `type=${type}`); })
+        .on(AuthStatus.LOGOUT, () => { dot.className = 'dot'; log('warn', 'LOGOUT', ''); })
+        .on(AuthStatus.WAITING_FOR_POPUP, () => log('info', 'WAITING_FOR_POPUP', 'SSO popup pending'));
+    }
+
+    // ---------- Create + render the chosen embed ----------
+    let current = null;
+    function renderEmbed() {
+      const container = $('embed-container');
+      if (current && current.destroy) { try { current.destroy(); } catch {} }
+      container.innerHTML = '';
+
+      const type = $('embedType').value;
+      const id = $('contentId').value.trim();
+      const view = { frameParams: { width: '100%', height: '100%' } };
+      let embed;
+      switch (type) {
+        case 'Liveboard': embed = new LiveboardEmbed(container, { ...view, liveboardId: id }); break;
+        case 'Search':    embed = new SearchEmbed(container, { ...view, dataSource: id || undefined }); break;
+        case 'SearchBar': embed = new SearchBarEmbed(container, { ...view, dataSource: id || undefined }); break;
+        case 'App':       embed = new AppEmbed(container, { ...view, path: id || undefined }); break;
+        case 'Spotter':   embed = new SpotterEmbed(container, { ...view, worksheetId: id }); break;
+      }
+      // Iframe / cookie lifecycle events — the stuff you're reading about.
+      embed
+        .on(EmbedEvent.Init, () => log('info', 'iframe:Init', ''))
+        .on(EmbedEvent.AuthInit, (e) => log('ok', 'iframe:AuthInit', 'app confirmed session inside iframe'))
+        .on(EmbedEvent.NoCookieAccess, () => log('err', 'iframe:NoCookieAccess', '3rd-party cookie blocked — switch to Cookieless'))
+        .on(EmbedEvent.AuthExpire, () => log('warn', 'iframe:AuthExpire', 'session/token expired'))
+        .on(EmbedEvent.Load, () => log('info', 'iframe:Load', 'iframe loaded'))
+        .on(EmbedEvent.Error, (e) => log('err', 'iframe:Error', e))
+        .on(EmbedEvent.AuthFailure, (e) => log('err', 'iframe:AuthFailure', e));
+      embed.render();
+      current = embed;
+      window.tsEmbed = embed; // for console poking
+      log('info', 'render', `${type}${id ? ' · ' + id : ''}`);
+    }
+
+    // ---------- Run ----------
+    $('run').onclick = () => {
+      saveCfg();
+      const cfg = buildConfig();
+      if (!cfg.thoughtSpotHost) { log('err', 'config', 'Cluster URL is required'); return; }
+      dot.className = 'dot';
+      log('info', 'init', `authType=${cfg.authType} host=${cfg.thoughtSpotHost}`);
+      try {
+        const authEE = init(cfg);
+        wireAuth(authEE);
+        renderEmbed();
+      } catch (e) {
+        dot.className = 'dot err';
+        log('err', 'init:error', e && e.message ? e.message : String(e));
+      }
+    };
+
+    $('logout').onclick = async () => {
+      try {
+        const mod = await import('https://cdn.jsdelivr.net/npm/@thoughtspot/visual-embed-sdk@1.51.0/dist/tsembed.es.js');
+        await mod.logout();
+        log('warn', 'logout', 'called SDK logout()');
+      } catch (e) { log('err', 'logout:error', e.message); }
+    };
+
+    // ---------- Boot ----------
+    loadCfg();
+    syncForm();
+
+    // Auto-resume after an SSO/OIDC redirect: the SDK re-runs on the returned page,
+    // so if we were mid-SSO we re-init automatically using the saved config.
+    const at = $('authType').value;
+    if ((at === 'SSO' || at === 'OIDC') && $('host').value.trim()) {
+      log('info', 'boot', 'SSO/OIDC auth type detected on load — re-initializing from saved config');
+      $('run').click();
+    }
+  </script>
+</body>
+</html>
