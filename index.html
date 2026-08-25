@@ -179,7 +179,7 @@
 
   <script type="module">
     import {
-      init, AuthType, AuthStatus, EmbedEvent, HostEvent,
+      init, logout, AuthType, AuthStatus, EmbedEvent, HostEvent,
       LiveboardEmbed, SearchEmbed, SearchBarEmbed, AppEmbed, SpotterEmbed,
     } from 'https://cdn.jsdelivr.net/npm/@thoughtspot/visual-embed-sdk@1.51.0/dist/tsembed.es.js';
 
@@ -339,12 +339,23 @@
       }
     };
 
+    // Clear the ThoughtSpot session so you can test the "no active session" path.
+    // Without a valid session, the next Initialize & Render with SSO/OIDC will
+    // trigger the full-page login redirect (instead of honouring a live session).
     $('logout').onclick = async () => {
+      saveCfg();
+      const cfg = buildConfig();
+      if (!cfg.thoughtSpotHost) { log('err', 'logout', 'Cluster URL is required to log out'); return; }
       try {
-        const mod = await import('https://cdn.jsdelivr.net/npm/@thoughtspot/visual-embed-sdk@1.51.0/dist/tsembed.es.js');
-        await mod.logout();
-        log('warn', 'logout', 'called SDK logout()');
-      } catch (e) { log('err', 'logout:error', e.message); }
+        init(cfg);                 // ensure the SDK is pointed at this cluster first
+        await logout();            // ends the ThoughtSpot session → clears JSESSIONID
+        if (current && current.destroy) { try { current.destroy(); } catch {} }
+        current = null;
+        $('embed-container').innerHTML =
+          '<div class="placeholder">Session cleared. Click <b style="margin:0 4px">Initialize &amp; Render</b> to test the no-session redirect.</div>';
+        dot.className = 'dot';
+        log('warn', 'logout', 'SDK logout() done — session cleared. Re-run to test the redirect.');
+      } catch (e) { log('err', 'logout:error', e && e.message ? e.message : String(e)); }
     };
 
     // ---------- Boot ----------
