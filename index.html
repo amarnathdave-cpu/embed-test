@@ -251,12 +251,27 @@
     ['authType','tokenSource','embedType'].forEach((id) => $(id).addEventListener('change', syncForm));
     FIELDS.concat(CHECKS).forEach((id) => $(id).addEventListener('change', saveCfg));
 
+    // Map the dropdown selection to the SDK's actual AuthType *value*.
+    // Gotcha: the enum keys are NOT the values — AuthType.SSO === 'SSO_SAML' and
+    // AuthType.OIDC === 'SSO_OIDC'. Passing the raw 'SSO'/'OIDC' strings makes the
+    // SDK not recognise the auth type, so it silently skips the SSO flow (no
+    // isLoggedIn check, no redirect) and loads an unauthenticated iframe. Resolve
+    // through the enum so the value is always correct.
+    const SDK_AUTH_TYPE = {
+      None: AuthType.None,
+      Basic: AuthType.Basic,
+      AuthServer: AuthType.AuthServer,                       // TrustedAuthToken (cookie)
+      AuthServerCookieless: AuthType.TrustedAuthTokenCookieless,
+      SSO: AuthType.SSO,                                     // → 'SSO_SAML'
+      OIDC: AuthType.OIDC,                                   // → 'SSO_OIDC'
+    };
+
     // ---------- Build embedConfig from the form ----------
     function buildConfig() {
       const authType = $('authType').value;
       const cfg = {
         thoughtSpotHost: $('host').value.trim().replace(/\/+$/, ''),
-        authType,
+        authType: SDK_AUTH_TYPE[authType] || authType,
         suppressNoCookieAccessAlert: $('suppressNoCookie').checked,
         detectCookieAccessSlow: $('detectCookie').checked,
         disableLoginRedirect: $('disableRedirect').checked,
