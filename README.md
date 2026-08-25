@@ -20,17 +20,76 @@ python3 -m http.server 8000
 
 Open <http://localhost:8000>.
 
+## Deploying — make a change, push, publish
+
+This repo is connected to a Vercel project with **Git-based auto-deploy**, so
+publishing is just `git push`. There is no manual deploy step and no `vercel`
+command to remember.
+
+- **GitHub repo:** <https://github.com/amarnathdave-cpu/embed-test>
+- **Live URL (production):** <https://embed.app.thoughtspotdev.cloud>
+
+### The everyday loop
+
+```bash
+# 1. Edit the app (index.html is the whole thing)
+#    Preview locally first:
+python3 -m http.server 8000        # → http://localhost:8000
+
+# 2. Commit
+git add -A
+git commit -m "Describe your change"
+
+# 3. Publish — pushing to main auto-deploys to production
+git push
+```
+
+Within a few seconds of the push, Vercel builds and updates
+<https://embed.app.thoughtspotdev.cloud>. Hard-refresh (empty cache) to see it.
+
+### Safer: preview before it goes live
+
+Push a **branch** instead of `main` and Vercel gives you a throwaway preview URL
+(the change is NOT live on the production domain until you merge to `main`):
+
+```bash
+git checkout -b my-change
+# ...edit, commit...
+git push -u origin my-change        # → open a PR; Vercel comments a preview URL
+```
+
+Merge the PR into `main` → it auto-deploys to production.
+
+### Keeping local in sync
+
+If changes ever land on GitHub from elsewhere (e.g. a merged PR in the web UI),
+pull before you start editing:
+
+```bash
+git pull
+```
+
+**Rule of thumb:** local, GitHub, and the live site stay in sync as long as every
+change is a commit that you `git push`. Editing files without pushing means the
+live site is behind; the deployed site is always whatever is on GitHub `main`.
+
 ## Prerequisite on the cluster (one-time, done by an admin)
 
-The cluster must be told to trust your dev origin, or the browser will refuse to
-frame it / call it. In **Develop → Customizations → Security settings** add your
-origin to the allowlists:
+The cluster must be told to trust the origin the app is served from, or the
+browser will refuse to frame it / call it. In **Develop → Customizations →
+Security settings** add the origin to both allowlists:
 
-- **CSP visual embed hosts** (controls `frame-ancestors`): `http://localhost:8000`
-- **CORS allowlist**: `http://localhost:8000`
+| Serving the app from | Origin to allowlist |
+|---|---|
+| Production (deployed) | `https://embed.app.thoughtspotdev.cloud` |
+| Local dev | `http://localhost:8000` |
 
-Without this the iframe loads a blank/blocked page and you'll see CSP errors in
-the console — that's expected, not a bug in this app.
+- **CSP visual embed hosts** (controls `frame-ancestors`) — add the origin.
+- **CORS allowlist** — add the same origin.
+
+Add whichever origin(s) you actually test from. Without this the iframe loads a
+blank/blocked page and you'll see CSP errors in the console — that's expected,
+not a bug in this app.
 
 ## Auth types — what each one does
 
