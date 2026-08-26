@@ -239,6 +239,7 @@
       'authEndpoint','pasteToken','embedType','contentId'];
     const CHECKS = ['suppressNoCookie','detectCookie','disableRedirect','includePre'];
     const STORE = 'ts-embed-playground';
+    const SSO_ATTEMPTS = 'ts-embed-sso-attempts';   // sessionStorage key — SSO auto-resume loop guard
     // Older saved configs stored the enum KEY as authType; map to the enum VALUE.
     const LEGACY_AUTH = { SSO: 'SSO_SAML', OIDC: 'SSO_OIDC' };
     function saveCfg() {
@@ -400,7 +401,7 @@
       const S = SDK.AuthStatus;
       authEE
         .on(S.SDK_SUCCESS, () => { dot.className = 'dot ok'; log('ok', 'SDK_SUCCESS', 'auth passed in parent window; iframe not loaded yet'); })
-        .on(S.SUCCESS, (info) => { dot.className = 'dot ok'; log('ok', 'SUCCESS', info && (info.userGUID || info.userName) ? `user=${info.userName || info.userGUID}` : 'session active'); })
+        .on(S.SUCCESS, (info) => { sessionStorage.removeItem(SSO_ATTEMPTS); dot.className = 'dot ok'; log('ok', 'SUCCESS', info && (info.userGUID || info.userName) ? `user=${info.userName || info.userGUID}` : 'session active'); })
         .on(S.FAILURE, (type) => { dot.className = 'dot err'; log('err', 'FAILURE', `type=${type}`); })
         .on(S.LOGOUT, () => { dot.className = 'dot'; log('warn', 'LOGOUT', ''); })
         .on(S.WAITING_FOR_POPUP, () => log('info', 'WAITING_FOR_POPUP', 'SSO popup pending'));
@@ -526,6 +527,7 @@
         await SDK.logout();        // ends the ThoughtSpot session → clears JSESSIONID
         if (current && current.destroy) { try { current.destroy(); } catch {} }
         current = null;
+        sessionStorage.removeItem(SSO_ATTEMPTS);
         $('embed-container').innerHTML =
           '<div class="placeholder">Session cleared. Click <b style="margin:0 4px">Initialize &amp; Render</b> to test the no-session redirect.</div>';
         dot.className = 'dot';
@@ -542,10 +544,23 @@
       if (!ok) return;
       // Auto-resume after an SSO/OIDC redirect: the SDK re-runs on the returned page,
       // so if we were mid-SSO we re-init automatically using the saved config.
+      //
+      // GUARD AGAINST A REDIRECT LOOP: if the SSO flow keeps returning and failing,
+      // auto-resuming on every load would redirect forever — the page appears to
+      // "freeze" and you can never switch to another auth type. Cap the number of
+      // consecutive auto-resumes (persisted per browser-tab session, so it counts
+      // across the redirect reloads). Cleared on a successful login or logout.
       const at = $('authType').value;
       if ((at === 'SSO_SAML' || at === 'SSO_OIDC') && $('host').value.trim()) {
-        log('info', 'boot', 'SSO/OIDC auth type detected on load — re-initializing from saved config');
-        $('run').click();
+        const attempts = +(sessionStorage.getItem(SSO_ATTEMPTS) || 0);
+        if (attempts >= 2) {
+          sessionStorage.removeItem(SSO_ATTEMPTS);
+          log('warn', 'boot', `SSO/OIDC auto-resume stopped after ${attempts} attempts to avoid a redirect loop. Click Initialize & Render to retry, or switch auth type.`);
+        } else {
+          sessionStorage.setItem(SSO_ATTEMPTS, String(attempts + 1));
+          log('info', 'boot', `SSO/OIDC auth type detected on load — re-initializing (attempt ${attempts + 1}/2)`);
+          $('run').click();
+        }
       }
     }
     boot();
