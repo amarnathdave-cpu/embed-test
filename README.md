@@ -5,8 +5,9 @@ SDK](https://github.com/thoughtspot/visual-embed-sdk) against **any** cluster.
 Switch auth types, try each embed type, and watch the auth/cookie/iframe events
 live — designed for learning how embedding + cookie propagation actually behave.
 
-The SDK is loaded straight from the jsDelivr ESM CDN (`@thoughtspot/visual-embed-sdk@1.51.0`),
-so there is **no build step and no `npm install`** for the app itself.
+The SDK is loaded at runtime from the jsDelivr ESM CDN via a **dynamic `import()`**,
+so there is **no build step and no `npm install`** for the app itself — and you can
+**switch SDK versions from the UI** (see below).
 
 ## Run it
 
@@ -19,6 +20,31 @@ python3 -m http.server 8000
 ```
 
 Open <http://localhost:8000>.
+
+## SDK version selector & dynamic auth types
+
+The **SDK version** field (top of the sidebar) controls which build of
+`@thoughtspot/visual-embed-sdk` is loaded. Pick a preset or type any published
+version and click **Load** — the app re-imports that build from the CDN.
+
+The **Auth type** dropdown is then populated **from that SDK's own `AuthType`
+enum**, so the list always matches the version you loaded. This matters because
+support changes across versions — e.g. `EmbeddedSSO` is present in older builds
+but dropped in newer ones. Load an older version to get it back.
+
+Because the options are built from the enum, each option's value is the SDK's
+**actual enum value** (e.g. `SSO_SAML`, `SSO_OIDC`), not the enum key — which
+avoids a subtle class of "auth silently does nothing" bugs.
+
+## SDK config inspector
+
+The bottom panel has two tabs:
+
+- **Events** — the live event log (see [The event log](#the-event-log)).
+- **SDK config** — the exact `init(embedConfig)` object and the per-embed
+  `viewConfig` the app will pass to the SDK, rendered as JSON and updated as you
+  edit the form. Use it to see precisely what's being sent — the quickest way to
+  understand and debug a configuration.
 
 ## Deploying — make a change, push, publish
 
@@ -93,17 +119,27 @@ not a bug in this app.
 
 ## Auth types — what each one does
 
-| Selection | SDK `AuthType` | Mechanism |
+The dropdown is generated from the loaded SDK, so the exact list depends on the
+version. The `AuthType` **enum value** column is what's actually sent to `init()`:
+
+| Selection | Enum value | Mechanism |
 |---|---|---|
 | None | `None` | No SDK login; uses an existing cluster session (or public content). |
 | Basic | `Basic` | POSTs username+password → session **cookie**. Dev/testing only. |
 | TrustedAuthToken | `AuthServer` | Fetches a token, exchanges it for a session **cookie**. Fragile under 3rd-party-cookie blocking. |
 | TrustedAuthTokenCookieless | `AuthServerCookieless` | Fetches a token, injects it into the iframe via `postMessage`. **No cookie** — the recommended embed path. |
-| SSO / SAML | `SSO` | Full-page redirect to the SAML IdP and back. |
-| OIDC | `OIDC` | Full-page redirect to `/callosum/v1/oidc/login` and back. |
+| SSO / SAML | `SSO_SAML` | Full-page redirect to the SAML IdP and back. |
+| OIDC | `SSO_OIDC` | Full-page redirect to `/callosum/v1/oidc/login` and back. |
+| EmbeddedSSO | `EmbeddedSSO` | In-iframe SSO (no full-page redirect). **Only in versions that still expose it.** |
+
+> Note the enum **keys ≠ values**: `AuthType.SSO === 'SSO_SAML'` and
+> `AuthType.OIDC === 'SSO_OIDC'`. The app sends the value; passing the key
+> (`'SSO'`/`'OIDC'`) makes the SDK skip the auth flow entirely.
 
 Config is saved to `localStorage`, so after an SSO/OIDC redirect the page
-re-initializes automatically from where you left off.
+re-initializes automatically from where you left off. Redirect SSO only
+redirects when there is **no** active session; an existing session is honoured
+in place.
 
 ## Exploring the cookieless path
 
@@ -127,7 +163,8 @@ re-initializes automatically from where you left off.
 
 ## The event log
 
-The bottom panel logs two streams so you can see the whole handshake:
+The **Events** tab of the bottom panel logs two streams so you can see the whole
+handshake:
 
 - **`init()` auth emitter** — `SDK_SUCCESS`, `SUCCESS`, `FAILURE` (with
   `AuthFailureType`, e.g. `NO_COOKIE_ACCESS`), `LOGOUT`.
@@ -140,8 +177,9 @@ The status dot next to the title turns green on auth success, red on failure.
 ## Console access
 
 While the page is open, `window.tsEmbed` is the current embed instance and
-`window.TsEmbedSDK` holds `{ init, AuthType, AuthStatus, EmbedEvent, HostEvent }`
-for live experimentation.
+`window.TsEmbedSDK` is the **entire loaded SDK module** (whichever version you
+selected) — `init`, `logout`, `AuthType`, `AuthStatus`, `EmbedEvent`, `HostEvent`,
+the embed classes, etc. — for live experimentation.
 
 ## Files
 
