@@ -409,6 +409,7 @@
 
     // ---------- Create + render the chosen embed ----------
     let current = null;
+    let ssoReasserted = false;   // guards the one-time post-auth re-render (see AuthInit below)
     function renderEmbed() {
       const container = $('embed-container');
       if (current && current.destroy) { try { current.destroy(); } catch {} }
@@ -416,6 +417,7 @@
 
       const type = $('embedType').value;
       const id = $('contentId').value.trim();
+      const authType = $('authType').value;
       const Cls = SDK[type + 'Embed'];
       if (!Cls) { log('err', 'render', `${type}Embed is not available in SDK v${$('sdkVersion').value}`); return; }
       const embed = new Cls(container, embedOptions(type, id));
@@ -423,7 +425,20 @@
       // Iframe / cookie lifecycle events — the stuff you're reading about.
       embed
         .on(E.Init, () => log('info', 'iframe:Init', ''))
-        .on(E.AuthInit, () => log('ok', 'iframe:AuthInit', 'app confirmed session inside iframe'))
+        .on(E.AuthInit, () => {
+          log('ok', 'iframe:AuthInit', 'app confirmed session inside iframe');
+          // EmbeddedSSO authenticates INSIDE the iframe with no page reload, and the
+          // deep-link route (#/embed/viz/<id>) is lost across the in-iframe auth
+          // redirect — so the app can land on Home/full-app instead of the content.
+          // Re-render ONCE now that a session exists: the fresh embed loads straight
+          // to the target Liveboard/Answer/Search (like the redirect-reload path,
+          // but without leaving the page). Guarded so it runs at most once per run.
+          if (authType === 'EmbeddedSSO' && !ssoReasserted) {
+            ssoReasserted = true;
+            log('info', 'reassert', `EmbeddedSSO: re-rendering to load ${type}${id ? ' ' + id : ''} directly`);
+            setTimeout(renderEmbed, 0);
+          }
+        })
         .on(E.NoCookieAccess, () => log('err', 'iframe:NoCookieAccess', '3rd-party cookie blocked — switch to Cookieless'))
         .on(E.AuthExpire, () => log('warn', 'iframe:AuthExpire', 'session/token expired'))
         .on(E.Load, () => log('info', 'iframe:Load', 'iframe loaded'))
@@ -502,6 +517,7 @@
       const cfg = buildConfig();
       if (!cfg.thoughtSpotHost) { log('err', 'config', 'Cluster URL is required'); return; }
       dot.className = 'dot';
+      ssoReasserted = false;     // fresh run → allow one post-auth re-render if needed
       renderConfigView();
       log('info', 'init', `sdk=${$('sdkVersion').value} authType=${cfg.authType} host=${cfg.thoughtSpotHost}`);
       try {
@@ -527,6 +543,7 @@
         await SDK.logout();        // ends the ThoughtSpot session → clears JSESSIONID
         if (current && current.destroy) { try { current.destroy(); } catch {} }
         current = null;
+        ssoReasserted = false;
         sessionStorage.removeItem(SSO_ATTEMPTS);
         $('embed-container').innerHTML =
           '<div class="placeholder">Session cleared. Click <b style="margin:0 4px">Initialize &amp; Render</b> to test the no-session redirect.</div>';
