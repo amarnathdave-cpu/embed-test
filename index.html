@@ -507,33 +507,30 @@
       try {
         const authEE = SDK.init(cfg);
         wireAuth(authEE);
-        // Init & render SEPARATELY for EmbeddedSSO. The SDK navigates to the Liveboard
-        // right after the embed container loads; if we render BEFORE auth completes, the
-        // in-iframe auth redirect throws that navigation away and the app lands on Home.
-        // Rendering only AFTER auth is confirmed makes the container load already
-        // authenticated, so the navigate sticks and the target content loads directly.
-        // (All other auth types render immediately — unchanged.)
+
+        // ONE render for every auth type. For EmbeddedSSO the iframe is created BEFORE the
+        // session exists and authenticates in-iframe; the cluster's OIDC callback then
+        // lands the iframe on '/' (root), dropping the #/embed/viz/<id> deep-link. So once
+        // the session is GENUINELY created (AuthStatus.SUCCESS = session/info 200), do a
+        // single clean in-iframe redirect to the target content — no page reload, no
+        // manual refresh. (Redirect SSO/Cookieless don't need this: their iframe is only
+        // ever created after the session exists.)
+        renderEmbed();
         if (cfg.authType === 'EmbeddedSSO') {
-          let rendered = false;
-          const renderOnce = (why) => { if (rendered) return; rendered = true; log('info', 'render', `after auth (${why})`); renderEmbed(); };
-          // SDK_SUCCESS fires immediately (before a real session) — render on it so the
-          // iframe can perform the in-iframe SSO. (Rendering is needed to drive the auth.)
-          authEE.on(SDK.AuthStatus.SDK_SUCCESS, () => renderOnce('SDK_SUCCESS'));
-          setTimeout(() => renderOnce('fallback'), 5000);   // safety net if no auth event fires
-          // HAR shows EmbeddedSSO auth DOES succeed, but the cluster's /oidc/callback
-          // redirects the iframe to '/' (root), dropping the #/embed/viz/<id> deep-link,
-          // so the app lands on Home. On the GENUINE success (session/info 200 →
-          // AuthStatus.SUCCESS), explicitly navigate the embed to the target Liveboard.
+          let redirected = false;
           authEE.on(SDK.AuthStatus.SUCCESS, () => {
-            renderOnce('SUCCESS');
-            const id = $('contentId').value.trim();
-            if ($('embedType').value === 'Liveboard' && id && current && typeof current.navigateToLiveboard === 'function') {
-              log('info', 'navigate', `post-auth → navigateToLiveboard ${id}`);
-              try { current.navigateToLiveboard(id); } catch (e) { log('err', 'navigate', e && e.message ? e.message : String(e)); }
+            if (redirected) return;
+            redirected = true;
+            const type = $('embedType').value, id = $('contentId').value.trim();
+            if (type === 'Liveboard' && id && current && typeof current.navigateToLiveboard === 'function') {
+              log('info', 'redirect', `session ready → navigateToLiveboard ${id}`);
+              try { current.navigateToLiveboard(id); return; } catch (e) { log('err', 'redirect', e && e.message ? e.message : String(e)); }
             }
+            // Answer/Search/App/Spotter: no per-type navigate — recreate the embed now
+            // that a session exists, so it loads the target route directly (no round-trip).
+            log('info', 'redirect', `session ready → re-render ${type} with live session`);
+            renderEmbed();
           });
-        } else {
-          renderEmbed();
         }
       } catch (e) {
         dot.className = 'dot err';
