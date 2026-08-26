@@ -240,6 +240,7 @@
     const CHECKS = ['suppressNoCookie','detectCookie','disableRedirect','includePre'];
     const STORE = 'ts-embed-playground';
     const SSO_ATTEMPTS = 'ts-embed-sso-attempts';   // sessionStorage key — SSO auto-resume loop guard
+    const ESSO_RELOADED = 'ts-embed-esso-reloaded'; // sessionStorage key — one-shot reload after EmbeddedSSO auth
     // Older saved configs stored the enum KEY as authType; map to the enum VALUE.
     const LEGACY_AUTH = { SSO: 'SSO_SAML', OIDC: 'SSO_OIDC' };
     function saveCfg() {
@@ -409,7 +410,6 @@
 
     // ---------- Create + render the chosen embed ----------
     let current = null;
-    let ssoReasserted = false;   // guards the one-time post-auth re-render (see AuthInit below)
     function renderEmbed() {
       const container = $('embed-container');
       if (current && current.destroy) { try { current.destroy(); } catch {} }
@@ -429,14 +429,18 @@
           log('ok', 'iframe:AuthInit', 'app confirmed session inside iframe');
           // EmbeddedSSO authenticates INSIDE the iframe with no page reload, and the
           // deep-link route (#/embed/viz/<id>) is lost across the in-iframe auth
-          // redirect — so the app can land on Home/full-app instead of the content.
-          // Re-render ONCE now that a session exists: the fresh embed loads straight
-          // to the target Liveboard/Answer/Search (like the redirect-reload path,
-          // but without leaving the page). Guarded so it runs at most once per run.
-          if (authType === 'EmbeddedSSO' && !ssoReasserted) {
-            ssoReasserted = true;
-            log('info', 'reassert', `EmbeddedSSO: re-rendering to load ${type}${id ? ' ' + id : ''} directly`);
-            setTimeout(renderEmbed, 0);
+          // redirect, so the app lands on Home/full-app. A single full-page reload —
+          // now that a session cookie exists — makes the fresh embed load straight to
+          // the target content (boot() auto-renders it post-reload). One-shot, guarded
+          // by sessionStorage so it can never loop.
+          if (authType === 'EmbeddedSSO') {
+            if (sessionStorage.getItem(ESSO_RELOADED)) {
+              sessionStorage.removeItem(ESSO_RELOADED);   // this IS the post-reload load → done
+            } else {
+              sessionStorage.setItem(ESSO_RELOADED, '1');
+              log('info', 'reassert', `EmbeddedSSO: reloading page so ${type}${id ? ' ' + id : ''} loads directly`);
+              setTimeout(() => location.reload(), 0);
+            }
           }
         })
         .on(E.NoCookieAccess, () => log('err', 'iframe:NoCookieAccess', '3rd-party cookie blocked — switch to Cookieless'))
@@ -517,7 +521,6 @@
       const cfg = buildConfig();
       if (!cfg.thoughtSpotHost) { log('err', 'config', 'Cluster URL is required'); return; }
       dot.className = 'dot';
-      ssoReasserted = false;     // fresh run → allow one post-auth re-render if needed
       renderConfigView();
       log('info', 'init', `sdk=${$('sdkVersion').value} authType=${cfg.authType} host=${cfg.thoughtSpotHost}`);
       try {
@@ -543,8 +546,8 @@
         await SDK.logout();        // ends the ThoughtSpot session → clears JSESSIONID
         if (current && current.destroy) { try { current.destroy(); } catch {} }
         current = null;
-        ssoReasserted = false;
         sessionStorage.removeItem(SSO_ATTEMPTS);
+        sessionStorage.removeItem(ESSO_RELOADED);
         $('embed-container').innerHTML =
           '<div class="placeholder">Session cleared. Click <b style="margin:0 4px">Initialize &amp; Render</b> to test the no-session redirect.</div>';
         dot.className = 'dot';
@@ -578,6 +581,15 @@
           log('info', 'boot', `SSO/OIDC auth type detected on load — re-initializing (attempt ${attempts + 1}/2)`);
           $('run').click();
         }
+      }
+
+      // EmbeddedSSO: auto-render ONLY right after our own post-auth reload (flag set).
+      // Normal loads stay idle until the user clicks Initialize. On this reload a
+      // session cookie already exists, so the embed loads straight to the target
+      // content instead of the full app.
+      if (at === 'EmbeddedSSO' && sessionStorage.getItem(ESSO_RELOADED) && $('host').value.trim()) {
+        log('info', 'boot', 'EmbeddedSSO: resuming after post-auth reload to load target content');
+        $('run').click();
       }
     }
     boot();
