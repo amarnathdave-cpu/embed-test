@@ -23,9 +23,17 @@ Open <http://localhost:8000>.
 
 ## SDK version selector & dynamic auth types
 
-The **SDK version** field (top of the sidebar) controls which build of
-`@thoughtspot/visual-embed-sdk` is loaded. Pick a preset or type any published
-version and click **Load** — the app re-imports that build from the CDN.
+The **SDK version** dropdown (top of the sidebar) lists **every published version
+of `@thoughtspot/visual-embed-sdk`, pulled live from the npm registry at runtime**
+(via the jsDelivr data API) — so it stays current with no hardcoded list to
+maintain. Pick a version and the app re-imports that exact build from the CDN;
+**latest** is selected by default.
+
+- **Stable only by default.** Tick **include pre-releases** to also list
+  `-alpha`/`-beta`/etc. builds.
+- **Offline-safe.** If the registry can't be reached, it falls back to a small
+  built-in list so the app still works.
+- **Reload** re-imports the currently selected version.
 
 The **Auth type** dropdown is then populated **from that SDK's own `AuthType`
 enum**, so the list always matches the version you loaded. This matters because

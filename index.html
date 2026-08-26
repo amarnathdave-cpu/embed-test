@@ -37,6 +37,8 @@
     .field { display: flex; flex-direction: column; gap: 4px; }
     .field label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
     .field .hint { font-size: 11px; color: var(--muted); }
+    .chk-inline { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); text-transform: none; letter-spacing: 0; }
+    .chk-inline input { width: auto; }
     input, select, textarea {
       background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
       border-radius: 7px; padding: 8px 10px; font: inherit; width: 100%;
@@ -103,18 +105,11 @@
     <div class="field">
       <label for="sdkVersion">SDK version</label>
       <div class="row">
-        <input id="sdkVersion" list="sdkVersions" value="1.51.0" autocomplete="off" placeholder="1.51.0" />
-        <button id="reloadSdk" class="secondary" style="flex:.5">Load</button>
+        <select id="sdkVersion" style="flex:2"><option value="">loading versions…</option></select>
+        <button id="reloadSdk" class="secondary" style="flex:.6">Reload</button>
       </div>
-      <datalist id="sdkVersions">
-        <option value="1.51.0"></option>
-        <option value="1.42.0"></option>
-        <option value="1.36.2"></option>
-        <option value="1.31.0"></option>
-        <option value="1.28.4"></option>
-        <option value="1.25.0"></option>
-      </datalist>
-      <span class="hint">Auth types below are read from this version's SDK. Older versions expose <code>EmbeddedSSO</code>.</span>
+      <label class="chk-inline"><input type="checkbox" id="includePre" /> include pre-releases</label>
+      <span class="hint" id="versionHint">Versions are pulled live from the npm registry. Auth types below reflect the loaded version.</span>
     </div>
 
     <div class="field">
@@ -212,8 +207,14 @@
     // The SDK is loaded DYNAMICALLY (not a static import) so its version can be
     // switched at runtime and the available auth types read from that exact build.
     let SDK = null;
-    const CDN = (v) => `https://cdn.jsdelivr.net/npm/@thoughtspot/visual-embed-sdk@${v}/dist/tsembed.es.js`;
+    const PKG = '@thoughtspot/visual-embed-sdk';
+    const CDN = (v) => `https://cdn.jsdelivr.net/npm/${PKG}@${v}/dist/tsembed.es.js`;
+    const DATA_API = `https://data.jsdelivr.com/v1/packages/npm/${PKG}`;   // versions list (CORS-enabled)
     const DEFAULT_VERSION = '1.51.0';
+    // Used only if the registry can't be reached (offline / API down).
+    const FALLBACK_VERSIONS = ['1.51.0','1.42.0','1.36.2','1.31.0','1.28.4','1.25.0'];
+    let ALL_VERSIONS = [];        // full list pulled from the registry at runtime
+    let LATEST = DEFAULT_VERSION; // registry's "latest" dist-tag
 
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -236,7 +237,7 @@
     // ---------- Config persistence (survives SSO/OIDC page reloads) ----------
     const FIELDS = ['sdkVersion','host','authType','basicUser','basicPass','tokenUser','tokenSource',
       'authEndpoint','pasteToken','embedType','contentId'];
-    const CHECKS = ['suppressNoCookie','detectCookie','disableRedirect'];
+    const CHECKS = ['suppressNoCookie','detectCookie','disableRedirect','includePre'];
     const STORE = 'ts-embed-playground';
     // Older saved configs stored the enum KEY as authType; map to the enum VALUE.
     const LEGACY_AUTH = { SSO: 'SSO_SAML', OIDC: 'SSO_OIDC' };
@@ -249,7 +250,7 @@
     function readCfg() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; } }
     function loadCfg() {
       const c = readCfg();
-      FIELDS.forEach((f) => { if (c[f] != null && f !== 'authType') $(f).value = c[f]; });
+      FIELDS.forEach((f) => { if (c[f] != null && f !== 'authType' && f !== 'sdkVersion') $(f).value = c[f]; });
       CHECKS.forEach((f) => { if (c[f] != null) $(f).checked = c[f]; });
     }
     // Applied AFTER the auth-type dropdown is populated from the loaded SDK.
@@ -451,9 +452,47 @@
         return false;
       }
     }
-    const doReload = () => { saveCfg(); loadSDK(($('sdkVersion').value || DEFAULT_VERSION).trim()); };
-    $('reloadSdk').onclick = doReload;
-    $('sdkVersion').addEventListener('change', doReload);
+    // ---------- Pull the available versions from the registry at runtime ----------
+    async function fetchVersions() {
+      try {
+        const res = await fetch(DATA_API, { headers: { accept: 'application/json' } });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        LATEST = (data.tags && data.tags.latest) || DEFAULT_VERSION;
+        ALL_VERSIONS = (data.versions || []).map((v) => v.version).filter(Boolean);   // newest first
+        if (!ALL_VERSIONS.length) throw new Error('empty version list');
+        log('ok', 'versions', `fetched ${ALL_VERSIONS.length} versions from registry · latest ${LATEST}`);
+        return true;
+      } catch (e) {
+        ALL_VERSIONS = FALLBACK_VERSIONS.slice();
+        LATEST = DEFAULT_VERSION;
+        log('warn', 'versions', `registry fetch failed (${e && e.message ? e.message : e}) — using built-in fallback list`);
+        return false;
+      }
+    }
+    function populateVersions(preferred) {
+      const sel = $('sdkVersion');
+      const includePre = $('includePre').checked;
+      const list = ALL_VERSIONS.filter((v) => includePre || !v.includes('-'));
+      if (preferred && !list.includes(preferred)) list.unshift(preferred);   // keep a saved/custom pick visible
+      sel.innerHTML = '';
+      for (const v of list) {
+        const opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = (v === LATEST) ? `${v}  (latest)` : v;
+        sel.appendChild(opt);
+      }
+      const want = (preferred && list.includes(preferred)) ? preferred
+                 : (list.includes(LATEST) ? LATEST : list[0]);
+      if (want) sel.value = want;
+      const hidden = ALL_VERSIONS.filter((v) => v.includes('-')).length;
+      $('versionHint').textContent =
+        `${list.length} versions from the npm registry (newest first)` +
+        (includePre ? '' : ` · ${hidden} pre-releases hidden`) + '. Auth types reflect the loaded version.';
+    }
+    $('reloadSdk').onclick = () => { saveCfg(); loadSDK($('sdkVersion').value || LATEST); };
+    $('sdkVersion').addEventListener('change', () => { saveCfg(); loadSDK($('sdkVersion').value); });
+    $('includePre').addEventListener('change', () => { saveCfg(); populateVersions($('sdkVersion').value || LATEST); });
 
     // ---------- Run ----------
     $('run').onclick = () => {
@@ -496,8 +535,10 @@
 
     // ---------- Boot ----------
     async function boot() {
-      loadCfg();                                   // restore fields (incl. sdkVersion)
-      const ok = await loadSDK($('sdkVersion').value || DEFAULT_VERSION);
+      loadCfg();                                   // restore fields + checkboxes (incl. includePre)
+      await fetchVersions();                       // pull the live version list from the registry
+      populateVersions(readCfg().sdkVersion || LATEST);
+      const ok = await loadSDK($('sdkVersion').value || LATEST);
       if (!ok) return;
       // Auto-resume after an SSO/OIDC redirect: the SDK re-runs on the returned page,
       // so if we were mid-SSO we re-init automatically using the saved config.
