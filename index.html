@@ -79,11 +79,43 @@
     .log-line.warn .k { color: var(--warn); }
     .log-line.err  .k { color: var(--err); }
     .log-line .m { color: var(--text); word-break: break-word; white-space: pre-wrap; }
+    /* ---- Bottom-panel tabs + config viewer ---- */
+    #log-head .tabs { display: flex; gap: 4px; }
+    #log-head .tab {
+      flex: none; background: transparent; border: 1px solid transparent; color: var(--muted);
+      font-size: 11px; text-transform: uppercase; letter-spacing: .04em; font-weight: 600;
+      padding: 4px 10px; border-radius: 6px;
+    }
+    #log-head .tab.active { color: var(--text); background: var(--panel-2); border-color: var(--border); }
+    #config-view {
+      flex: 1; overflow: auto; margin: 0; padding: 8px 12px;
+      font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.45;
+      color: var(--text); white-space: pre; tab-size: 2;
+    }
+    #config-view .c-comment { color: var(--muted); }
+    #config-view .c-warn { color: var(--warn); }
   </style>
 </head>
 <body>
   <aside>
     <h1><span class="dot" id="status-dot"></span> ThoughtSpot Embed Playground</h1>
+
+    <div class="field">
+      <label for="sdkVersion">SDK version</label>
+      <div class="row">
+        <input id="sdkVersion" list="sdkVersions" value="1.51.0" autocomplete="off" placeholder="1.51.0" />
+        <button id="reloadSdk" class="secondary" style="flex:.5">Load</button>
+      </div>
+      <datalist id="sdkVersions">
+        <option value="1.51.0"></option>
+        <option value="1.42.0"></option>
+        <option value="1.36.2"></option>
+        <option value="1.31.0"></option>
+        <option value="1.28.4"></option>
+        <option value="1.25.0"></option>
+      </datalist>
+      <span class="hint">Auth types below are read from this version's SDK. Older versions expose <code>EmbeddedSSO</code>.</span>
+    </div>
 
     <div class="field">
       <label for="host">Cluster URL</label>
@@ -94,12 +126,7 @@
     <div class="field">
       <label for="authType">Auth type</label>
       <select id="authType">
-        <option value="None">None — rely on an existing session</option>
-        <option value="Basic">Basic — username + password (dev only)</option>
-        <option value="AuthServer">TrustedAuthToken — token, cookie-based</option>
-        <option value="AuthServerCookieless">TrustedAuthTokenCookieless — token, no cookie</option>
-        <option value="SSO">SSO / SAML — full-page redirect</option>
-        <option value="OIDC">OIDC — full-page redirect</option>
+        <option value="">loading from SDK…</option>
       </select>
       <span class="hint" id="authHint"></span>
     </div>
@@ -170,23 +197,26 @@
     <div id="embed-container"><div class="placeholder">Configure a cluster on the left and click <b style="margin:0 4px">Initialize &amp; Render</b> to embed.</div></div>
     <div id="log-panel">
       <div id="log-head">
-        <span>Event log — auth status &amp; iframe events</span>
+        <div class="tabs">
+          <button class="tab active" id="tab-events">Events</button>
+          <button class="tab" id="tab-config">SDK config</button>
+        </div>
         <button class="secondary" id="clearLog">clear</button>
       </div>
       <div id="log"></div>
+      <pre id="config-view" class="hide"></pre>
     </div>
   </main>
 
   <script type="module">
-    import {
-      init, logout, AuthType, AuthStatus, EmbedEvent, HostEvent,
-      LiveboardEmbed, SearchEmbed, SearchBarEmbed, AppEmbed, SpotterEmbed,
-    } from 'https://cdn.jsdelivr.net/npm/@thoughtspot/visual-embed-sdk@1.51.0/dist/tsembed.es.js';
-
-    // Expose for console tinkering while you explore.
-    window.TsEmbedSDK = { init, AuthType, AuthStatus, EmbedEvent, HostEvent };
+    // The SDK is loaded DYNAMICALLY (not a static import) so its version can be
+    // switched at runtime and the available auth types read from that exact build.
+    let SDK = null;
+    const CDN = (v) => `https://cdn.jsdelivr.net/npm/@thoughtspot/visual-embed-sdk@${v}/dist/tsembed.es.js`;
+    const DEFAULT_VERSION = '1.51.0';
 
     const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
     const logEl = $('log');
     const dot = $('status-dot');
 
@@ -204,31 +234,69 @@
     $('clearLog').onclick = () => { logEl.innerHTML = ''; };
 
     // ---------- Config persistence (survives SSO/OIDC page reloads) ----------
-    const FIELDS = ['host','authType','basicUser','basicPass','tokenUser','tokenSource',
+    const FIELDS = ['sdkVersion','host','authType','basicUser','basicPass','tokenUser','tokenSource',
       'authEndpoint','pasteToken','embedType','contentId'];
     const CHECKS = ['suppressNoCookie','detectCookie','disableRedirect'];
     const STORE = 'ts-embed-playground';
+    // Older saved configs stored the enum KEY as authType; map to the enum VALUE.
+    const LEGACY_AUTH = { SSO: 'SSO_SAML', OIDC: 'SSO_OIDC' };
     function saveCfg() {
       const c = {};
       FIELDS.forEach((f) => { c[f] = $(f).value; });
       CHECKS.forEach((f) => { c[f] = $(f).checked; });
       localStorage.setItem(STORE, JSON.stringify(c));
     }
+    function readCfg() { try { return JSON.parse(localStorage.getItem(STORE)) || {}; } catch { return {}; } }
     function loadCfg() {
-      let c; try { c = JSON.parse(localStorage.getItem(STORE)) || {}; } catch { c = {}; }
-      FIELDS.forEach((f) => { if (c[f] != null) $(f).value = c[f]; });
+      const c = readCfg();
+      FIELDS.forEach((f) => { if (c[f] != null && f !== 'authType') $(f).value = c[f]; });
       CHECKS.forEach((f) => { if (c[f] != null) $(f).checked = c[f]; });
+    }
+    // Applied AFTER the auth-type dropdown is populated from the loaded SDK.
+    function restoreAuthType() {
+      const c = readCfg();
+      let v = c.authType;
+      if (v && LEGACY_AUTH[v]) v = LEGACY_AUTH[v];
+      const sel = $('authType');
+      if (v && [...sel.options].some((o) => o.value === v)) sel.value = v;
+    }
+
+    // ---------- Auth-type metadata (keyed by the SDK enum VALUE) ----------
+    const AUTH_META = {
+      None:                 { label: 'None — existing session', hint: 'No SDK login. The iframe uses whatever session already exists (or public content).' },
+      Basic:                { label: 'Basic — username + password', hint: 'POSTs username/password to /callosum/v1/session/login. Sets a cookie. Dev/testing only.' },
+      AuthServer:           { label: 'TrustedAuthToken — token → cookie', hint: 'Fetches a token, exchanges it for a session COOKIE. Fragile under 3rd-party cookie blocking.' },
+      AuthServerCookieless: { label: 'TrustedAuthTokenCookieless — token, no cookie', hint: 'Fetches a token and injects it into the iframe via postMessage. No cookie — the recommended embed path.' },
+      SSO_SAML:             { label: 'SSO / SAML — full-page redirect', hint: 'Redirects the WHOLE PAGE to /callosum/v1/saml/login, then back. Config restored from localStorage after the round-trip.' },
+      SSO_OIDC:             { label: 'OIDC — full-page redirect', hint: 'Redirects the WHOLE PAGE to /callosum/v1/oidc/login (forceSAMLAutoRedirect=true), then back.' },
+      EmbeddedSSO:          { label: 'EmbeddedSSO — in-iframe SSO', hint: 'SSO handled inside the iframe (no full-page redirect). Not present in newer SDK versions.' },
+    };
+    const AUTH_ORDER = ['None','Basic','AuthServer','AuthServerCookieless','SSO_SAML','SSO_OIDC','EmbeddedSSO'];
+    // Unique AuthType values exposed by the loaded SDK (this is the version-specific list).
+    function authValues() {
+      if (!SDK || !SDK.AuthType) return [];
+      const uniq = [...new Set(Object.values(SDK.AuthType))];
+      return uniq.sort((a, b) => {
+        const ia = AUTH_ORDER.indexOf(a), ib = AUTH_ORDER.indexOf(b);
+        return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || String(a).localeCompare(String(b));
+      });
+    }
+    function populateAuthTypes() {
+      const sel = $('authType');
+      const prev = sel.value;
+      sel.innerHTML = '';
+      for (const val of authValues()) {
+        const meta = AUTH_META[val] || { label: val };
+        const opt = document.createElement('option');
+        opt.value = val;                 // the option value IS the real SDK enum value
+        opt.textContent = meta.label || val;
+        sel.appendChild(opt);
+      }
+      if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+      syncForm();
     }
 
     // ---------- Dynamic form ----------
-    const AUTH_HINTS = {
-      None: 'No SDK login. The iframe uses whatever session already exists (or public content).',
-      Basic: 'POSTs username/password to /callosum/v1/session/login. Sets a cookie. Dev/testing only.',
-      AuthServer: 'Fetches a token, POSTs it to /session/login/token → session COOKIE. Fragile under 3rd-party cookie blocking.',
-      AuthServerCookieless: 'Fetches a token and injects it into the iframe via postMessage. No cookie — the recommended embed path.',
-      SSO: 'Redirects the WHOLE PAGE to /callosum/v1/saml/login, then back. Config is restored from localStorage after the round-trip.',
-      OIDC: 'Redirects the WHOLE PAGE to /callosum/v1/oidc/login (forceSAMLAutoRedirect=true), then back.',
-    };
     const CONTENT = {
       Liveboard: ['Liveboard ID', 'GUID of the Liveboard to open.'],
       Search:    ['Data source ID (optional)', 'Worksheet/Model GUID to search against. Blank = pick in-app.'],
@@ -238,7 +306,7 @@
     };
     function syncForm() {
       const at = $('authType').value;
-      $('authHint').textContent = AUTH_HINTS[at] || '';
+      $('authHint').textContent = (AUTH_META[at] && AUTH_META[at].hint) || '';
       $('fs-basic').classList.toggle('hide', at !== 'Basic');
       $('fs-token').classList.toggle('hide', at !== 'AuthServer' && at !== 'AuthServerCookieless');
       const paste = $('tokenSource').value === 'paste';
@@ -248,30 +316,17 @@
       $('contentLabel').textContent = lbl;
       $('contentHint').textContent = hint;
     }
-    ['authType','tokenSource','embedType'].forEach((id) => $(id).addEventListener('change', syncForm));
-    FIELDS.concat(CHECKS).forEach((id) => $(id).addEventListener('change', saveCfg));
-
-    // Map the dropdown selection to the SDK's actual AuthType *value*.
-    // Gotcha: the enum keys are NOT the values — AuthType.SSO === 'SSO_SAML' and
-    // AuthType.OIDC === 'SSO_OIDC'. Passing the raw 'SSO'/'OIDC' strings makes the
-    // SDK not recognise the auth type, so it silently skips the SSO flow (no
-    // isLoggedIn check, no redirect) and loads an unauthenticated iframe. Resolve
-    // through the enum so the value is always correct.
-    const SDK_AUTH_TYPE = {
-      None: AuthType.None,
-      Basic: AuthType.Basic,
-      AuthServer: AuthType.AuthServer,                       // TrustedAuthToken (cookie)
-      AuthServerCookieless: AuthType.TrustedAuthTokenCookieless,
-      SSO: AuthType.SSO,                                     // → 'SSO_SAML'
-      OIDC: AuthType.OIDC,                                   // → 'SSO_OIDC'
-    };
+    ['authType','tokenSource','embedType'].forEach((id) => $(id).addEventListener('change', () => { syncForm(); renderConfigView(); }));
+    FIELDS.concat(CHECKS).forEach((id) => $(id).addEventListener('change', () => { saveCfg(); renderConfigView(); }));
+    FIELDS.forEach((id) => $(id).addEventListener('input', renderConfigView));
 
     // ---------- Build embedConfig from the form ----------
+    // The auth-type dropdown value is already the SDK enum value, so no mapping needed.
     function buildConfig() {
       const authType = $('authType').value;
       const cfg = {
         thoughtSpotHost: $('host').value.trim().replace(/\/+$/, ''),
-        authType: SDK_AUTH_TYPE[authType] || authType,
+        authType,
         suppressNoCookieAccessAlert: $('suppressNoCookie').checked,
         detectCookieAccessSlow: $('detectCookie').checked,
         disableLoginRedirect: $('disableRedirect').checked,
@@ -294,14 +349,60 @@
       return cfg;
     }
 
+    // ---------- Per-embed view options (shared by render + config viewer) ----------
+    function embedOptions(type, id) {
+      const view = { frameParams: { width: '100%', height: '100%' } };
+      switch (type) {
+        case 'Liveboard': return { ...view, liveboardId: id };
+        case 'Search':    return { ...view, dataSource: id || undefined };
+        case 'SearchBar': return { ...view, dataSource: id || undefined };
+        case 'App':       return { ...view, path: id || undefined };
+        case 'Spotter':   return { ...view, worksheetId: id };
+        default:          return view;
+      }
+    }
+
+    // ---------- Live SDK config viewer ----------
+    function renderConfigView() {
+      const view = $('config-view');
+      if (!view || view.classList.contains('hide')) return;   // only render when visible
+      const version = $('sdkVersion').value.trim();
+      const cfg = buildConfig();
+      const type = $('embedType').value;
+      const id = $('contentId').value.trim();
+      const replacer = (k, v) => (typeof v === 'function' ? 'ƒ () → Promise<token>' : v);
+      const cfgJson = esc(JSON.stringify(cfg, replacer, 2));
+      const optsJson = esc(JSON.stringify(embedOptions(type, id), null, 2));
+      const types = authValues();
+      view.innerHTML =
+        `<span class="c-comment">// SDK @thoughtspot/visual-embed-sdk@${esc(version || '?')}` +
+        (SDK ? `  (auth types: ${esc(types.join(', '))})` : '  — not loaded') + `</span>\n\n` +
+        `<span class="c-comment">// init(embedConfig)</span>\n${cfgJson}\n\n` +
+        `<span class="c-comment">// new ${esc(type)}Embed(container, viewConfig)</span>\n${optsJson}`;
+    }
+
+    // ---------- Bottom-panel tabs ----------
+    function showTab(which) {
+      const events = which === 'events';
+      $('tab-events').classList.toggle('active', events);
+      $('tab-config').classList.toggle('active', !events);
+      $('log').classList.toggle('hide', !events);
+      $('config-view').classList.toggle('hide', events);
+      $('clearLog').classList.toggle('hide', !events);
+      if (!events) renderConfigView();
+    }
+    $('tab-events').onclick = () => showTab('events');
+    $('tab-config').onclick = () => showTab('config');
+
     // ---------- Wire the init() auth emitter ----------
     function wireAuth(authEE) {
+      const S = SDK.AuthStatus;
       authEE
-        .on(AuthStatus.SDK_SUCCESS, () => { dot.className = 'dot ok'; log('ok', 'SDK_SUCCESS', 'auth passed in parent window; iframe not loaded yet'); })
-        .on(AuthStatus.SUCCESS, (info) => { dot.className = 'dot ok'; log('ok', 'SUCCESS', info && (info.userGUID || info.userName) ? `user=${info.userName || info.userGUID}` : 'session active'); })
-        .on(AuthStatus.FAILURE, (type) => { dot.className = 'dot err'; log('err', 'FAILURE', `type=${type}`); })
-        .on(AuthStatus.LOGOUT, () => { dot.className = 'dot'; log('warn', 'LOGOUT', ''); })
-        .on(AuthStatus.WAITING_FOR_POPUP, () => log('info', 'WAITING_FOR_POPUP', 'SSO popup pending'));
+        .on(S.SDK_SUCCESS, () => { dot.className = 'dot ok'; log('ok', 'SDK_SUCCESS', 'auth passed in parent window; iframe not loaded yet'); })
+        .on(S.SUCCESS, (info) => { dot.className = 'dot ok'; log('ok', 'SUCCESS', info && (info.userGUID || info.userName) ? `user=${info.userName || info.userGUID}` : 'session active'); })
+        .on(S.FAILURE, (type) => { dot.className = 'dot err'; log('err', 'FAILURE', `type=${type}`); })
+        .on(S.LOGOUT, () => { dot.className = 'dot'; log('warn', 'LOGOUT', ''); })
+        .on(S.WAITING_FOR_POPUP, () => log('info', 'WAITING_FOR_POPUP', 'SSO popup pending'));
     }
 
     // ---------- Create + render the chosen embed ----------
@@ -313,39 +414,58 @@
 
       const type = $('embedType').value;
       const id = $('contentId').value.trim();
-      const view = { frameParams: { width: '100%', height: '100%' } };
-      let embed;
-      switch (type) {
-        case 'Liveboard': embed = new LiveboardEmbed(container, { ...view, liveboardId: id }); break;
-        case 'Search':    embed = new SearchEmbed(container, { ...view, dataSource: id || undefined }); break;
-        case 'SearchBar': embed = new SearchBarEmbed(container, { ...view, dataSource: id || undefined }); break;
-        case 'App':       embed = new AppEmbed(container, { ...view, path: id || undefined }); break;
-        case 'Spotter':   embed = new SpotterEmbed(container, { ...view, worksheetId: id }); break;
-      }
+      const Cls = SDK[type + 'Embed'];
+      if (!Cls) { log('err', 'render', `${type}Embed is not available in SDK v${$('sdkVersion').value}`); return; }
+      const embed = new Cls(container, embedOptions(type, id));
+      const E = SDK.EmbedEvent;
       // Iframe / cookie lifecycle events — the stuff you're reading about.
       embed
-        .on(EmbedEvent.Init, () => log('info', 'iframe:Init', ''))
-        .on(EmbedEvent.AuthInit, (e) => log('ok', 'iframe:AuthInit', 'app confirmed session inside iframe'))
-        .on(EmbedEvent.NoCookieAccess, () => log('err', 'iframe:NoCookieAccess', '3rd-party cookie blocked — switch to Cookieless'))
-        .on(EmbedEvent.AuthExpire, () => log('warn', 'iframe:AuthExpire', 'session/token expired'))
-        .on(EmbedEvent.Load, () => log('info', 'iframe:Load', 'iframe loaded'))
-        .on(EmbedEvent.Error, (e) => log('err', 'iframe:Error', e))
-        .on(EmbedEvent.AuthFailure, (e) => log('err', 'iframe:AuthFailure', e));
+        .on(E.Init, () => log('info', 'iframe:Init', ''))
+        .on(E.AuthInit, () => log('ok', 'iframe:AuthInit', 'app confirmed session inside iframe'))
+        .on(E.NoCookieAccess, () => log('err', 'iframe:NoCookieAccess', '3rd-party cookie blocked — switch to Cookieless'))
+        .on(E.AuthExpire, () => log('warn', 'iframe:AuthExpire', 'session/token expired'))
+        .on(E.Load, () => log('info', 'iframe:Load', 'iframe loaded'))
+        .on(E.Error, (e) => log('err', 'iframe:Error', e))
+        .on(E.AuthFailure, (e) => log('err', 'iframe:AuthFailure', e));
       embed.render();
       current = embed;
       window.tsEmbed = embed; // for console poking
       log('info', 'render', `${type}${id ? ' · ' + id : ''}`);
     }
 
+    // ---------- Load / switch SDK version ----------
+    async function loadSDK(version) {
+      const v = (version || DEFAULT_VERSION).trim();
+      log('info', 'sdk', `loading @thoughtspot/visual-embed-sdk@${v} …`);
+      try {
+        SDK = await import(CDN(v));
+        window.TsEmbedSDK = SDK;   // for console tinkering
+        populateAuthTypes();
+        restoreAuthType();
+        syncForm();
+        renderConfigView();
+        log('ok', 'sdk', `loaded v${v} · auth types: ${authValues().join(', ')}`);
+        return true;
+      } catch (e) {
+        log('err', 'sdk', `failed to load v${v}: ${e && e.message ? e.message : e}`);
+        return false;
+      }
+    }
+    const doReload = () => { saveCfg(); loadSDK(($('sdkVersion').value || DEFAULT_VERSION).trim()); };
+    $('reloadSdk').onclick = doReload;
+    $('sdkVersion').addEventListener('change', doReload);
+
     // ---------- Run ----------
     $('run').onclick = () => {
+      if (!SDK) { log('err', 'sdk', 'SDK not loaded yet — set a valid version and click Load'); return; }
       saveCfg();
       const cfg = buildConfig();
       if (!cfg.thoughtSpotHost) { log('err', 'config', 'Cluster URL is required'); return; }
       dot.className = 'dot';
-      log('info', 'init', `authType=${cfg.authType} host=${cfg.thoughtSpotHost}`);
+      renderConfigView();
+      log('info', 'init', `sdk=${$('sdkVersion').value} authType=${cfg.authType} host=${cfg.thoughtSpotHost}`);
       try {
-        const authEE = init(cfg);
+        const authEE = SDK.init(cfg);
         wireAuth(authEE);
         renderEmbed();
       } catch (e) {
@@ -358,12 +478,13 @@
     // Without a valid session, the next Initialize & Render with SSO/OIDC will
     // trigger the full-page login redirect (instead of honouring a live session).
     $('logout').onclick = async () => {
+      if (!SDK) { log('err', 'sdk', 'SDK not loaded yet'); return; }
       saveCfg();
       const cfg = buildConfig();
       if (!cfg.thoughtSpotHost) { log('err', 'logout', 'Cluster URL is required to log out'); return; }
       try {
-        init(cfg);                 // ensure the SDK is pointed at this cluster first
-        await logout();            // ends the ThoughtSpot session → clears JSESSIONID
+        SDK.init(cfg);             // ensure the SDK is pointed at this cluster first
+        await SDK.logout();        // ends the ThoughtSpot session → clears JSESSIONID
         if (current && current.destroy) { try { current.destroy(); } catch {} }
         current = null;
         $('embed-container').innerHTML =
@@ -374,16 +495,19 @@
     };
 
     // ---------- Boot ----------
-    loadCfg();
-    syncForm();
-
-    // Auto-resume after an SSO/OIDC redirect: the SDK re-runs on the returned page,
-    // so if we were mid-SSO we re-init automatically using the saved config.
-    const at = $('authType').value;
-    if ((at === 'SSO' || at === 'OIDC') && $('host').value.trim()) {
-      log('info', 'boot', 'SSO/OIDC auth type detected on load — re-initializing from saved config');
-      $('run').click();
+    async function boot() {
+      loadCfg();                                   // restore fields (incl. sdkVersion)
+      const ok = await loadSDK($('sdkVersion').value || DEFAULT_VERSION);
+      if (!ok) return;
+      // Auto-resume after an SSO/OIDC redirect: the SDK re-runs on the returned page,
+      // so if we were mid-SSO we re-init automatically using the saved config.
+      const at = $('authType').value;
+      if ((at === 'SSO_SAML' || at === 'SSO_OIDC') && $('host').value.trim()) {
+        log('info', 'boot', 'SSO/OIDC auth type detected on load — re-initializing from saved config');
+        $('run').click();
+      }
     }
+    boot();
   </script>
 </body>
 </html>
