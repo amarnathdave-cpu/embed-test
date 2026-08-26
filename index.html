@@ -516,9 +516,22 @@
         if (cfg.authType === 'EmbeddedSSO') {
           let rendered = false;
           const renderOnce = (why) => { if (rendered) return; rendered = true; log('info', 'render', `after auth (${why})`); renderEmbed(); };
-          authEE.on(SDK.AuthStatus.SUCCESS, () => renderOnce('SUCCESS'));
+          // SDK_SUCCESS fires immediately (before a real session) — render on it so the
+          // iframe can perform the in-iframe SSO. (Rendering is needed to drive the auth.)
           authEE.on(SDK.AuthStatus.SDK_SUCCESS, () => renderOnce('SDK_SUCCESS'));
           setTimeout(() => renderOnce('fallback'), 5000);   // safety net if no auth event fires
+          // HAR shows EmbeddedSSO auth DOES succeed, but the cluster's /oidc/callback
+          // redirects the iframe to '/' (root), dropping the #/embed/viz/<id> deep-link,
+          // so the app lands on Home. On the GENUINE success (session/info 200 →
+          // AuthStatus.SUCCESS), explicitly navigate the embed to the target Liveboard.
+          authEE.on(SDK.AuthStatus.SUCCESS, () => {
+            renderOnce('SUCCESS');
+            const id = $('contentId').value.trim();
+            if ($('embedType').value === 'Liveboard' && id && current && typeof current.navigateToLiveboard === 'function') {
+              log('info', 'navigate', `post-auth → navigateToLiveboard ${id}`);
+              try { current.navigateToLiveboard(id); } catch (e) { log('err', 'navigate', e && e.message ? e.message : String(e)); }
+            }
+          });
         } else {
           renderEmbed();
         }
