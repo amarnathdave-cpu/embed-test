@@ -10,6 +10,68 @@ iframe on the cluster origin**, and they talk over `postMessage`.
 
 ---
 
+## 0. Prerequisites: cluster and IdP setup
+
+Before *any* auth type renders in an embed, the **embedding origin** must be
+trusted in several places. Miss one and you get a different, confusing failure.
+Everything below uses the full origin — **scheme + host, no path, no trailing
+slash** (`http` ≠ `https`). Examples use the deployed origin
+`https://embed.app.thoughtspotdev.cloud`; for local dev use `http://localhost:8000`.
+
+### 0.1 Cluster — Develop → Customizations → Security settings
+
+Add the embedding origin to **all three** lists; each gates a different mechanism:
+
+| Setting | Controls | Symptom if the origin is missing |
+|---|---|---|
+| **CSP visual embed hosts** | `Content-Security-Policy: frame-ancestors` on the cluster — who may *frame* it | blank/blocked iframe; `frame-ancestors` CSP error |
+| **CORS allowlist** | `Access-Control-Allow-Origin` for the SDK's cross-origin XHR (`/callosum/v1/session/isactive`, token calls) | SDK auth calls blocked; no `SDK_SUCCESS` |
+| **Redirect / trusted redirect domains** | domains the cluster will redirect back to after SSO login (`targetURLPath` validation) | `Target URL domain <origin> invalid or not whitelisted` after SSO |
+
+**Cookie-based types** (None / Basic / TrustedAuthToken / redirect SSO) also need
+the cluster session cookie to be usable in the cross-origin iframe:
+`Set-Cookie: JSESSIONID=…; SameSite=None; Secure; Partitioned`. If it's
+`SameSite=Lax`/`Strict`, the *parent* authenticates but the iframe shows
+`UNAUTHENTICATED_FAILURE` / `NoCookieAccess`. Cookieless sidesteps this entirely.
+
+### 0.2 IdP (Okta) — **required only for EmbeddedSSO**
+
+EmbeddedSSO renders the IdP login *inside the iframe*, so the IdP itself must
+allow being framed. By default Okta returns `Content-Security-Policy:
+frame-ancestors 'self'`, so the framed login fails with **"refused to connect."**
+On the Okta org behind your identity domain (e.g.
+`login.integrator.thoughtspotdev.cloud`):
+
+1. **Enable iFrame embedding** — Okta Admin → *Settings → Account* (or
+   *Customizations → Brands → [brand]*) → **iFrame embedding** → allow embedding of
+   Okta end-user pages. This removes `frame-ancestors 'self'` / `X-Frame-Options`.
+2. **Add Trusted Origins** — Okta Admin → *Security → API → Trusted Origins* → add
+   the embedding origins with **CORS + Redirect**:
+   - `https://embed.app.thoughtspotdev.cloud` — the host app (top-level ancestor)
+   - `https://<cluster>.thoughtspotdev.cloud` — the cluster iframe that frames Okta
+
+   Add **both**: EmbeddedSSO nests `embed-app → cluster → IdP`, and the browser
+   checks `frame-ancestors` against the **entire** ancestor chain.
+3. **Third-party cookies** — the Okta session cookie is third-party inside the
+   embed, so allow 3P cookies / **Partitioned (CHIPS)** for the IdP domain, or the
+   user must sign in interactively in the framed widget each time.
+
+Redirect SSO/OIDC and Cookieless need **no** IdP iframe/Trusted-Origin changes
+(the IdP loads top-level, or isn't used) — this IdP setup is EmbeddedSSO-only.
+
+### 0.3 What each auth type requires
+
+| Auth type | Cluster CSP + CORS | Cluster redirect allowlist | Cookie `SameSite=None` | IdP iframe embed + Trusted Origins |
+|---|---|---|---|---|
+| None | ✓ | – | ✓ | – |
+| Basic | ✓ | – | ✓ | – |
+| TrustedAuthToken | ✓ | – | ✓ | – |
+| TrustedAuthTokenCookieless | ✓ | – | – | – |
+| SSO / OIDC (redirect) | ✓ | ✓ | ✓ | – |
+| **EmbeddedSSO** | ✓ | ✓ | ✓ (session in-frame) | ✓ |
+
+---
+
 ## 1. The universal skeleton (true for every auth type)
 
 Embedding auth always has the same five phases. **Only Phase 1 changes** between
@@ -45,14 +107,22 @@ login page refuses to be framed.
 Phase 1 answers two questions: **(a) how is the credential obtained**, and
 **(b) does a cookie or a token carry it afterward**.
 
-| AuthType (enum value) | Phase-1 mechanism | Carrier |
+| AuthType key → enum value | Phase-1 mechanism | Carrier |
 |---|---|---|
-| `None` | nothing — assume a session already exists | cookie (pre-existing) |
-| `Basic` (`Basic`) | `POST /callosum/v1/session/login` (user+pass) | cookie |
-| `TrustedAuthToken` (`AuthServer`) | fetch token from your server → `POST /session/login/token` | cookie |
-| `TrustedAuthTokenCookieless` (`AuthServerCookieless`) | fetch token, keep it in the SDK | **token** (no cookie) |
-| `SSO` / `SAML` (`SSO`) | full-page redirect to SAML IdP → back | cookie |
-| `OIDC` (`OIDC`) | full-page redirect to `/callosum/v1/oidc/login` → IdP → back | cookie |
+| `None` → `None` | nothing — assume a session already exists | cookie (pre-existing) |
+| `Basic` → `Basic` | `POST /callosum/v1/session/login` (user+pass) | cookie |
+| `TrustedAuthToken` → `AuthServer` | fetch token from your server → `POST /session/login/token` | cookie |
+| `TrustedAuthTokenCookieless` → `AuthServerCookieless` | fetch token, keep it in the SDK | **token** (no cookie) |
+| `SSO` / `SAML` / `SAMLRedirect` → `SSO_SAML` | full-page redirect to SAML IdP → back | cookie |
+| `OIDC` / `OIDCRedirect` → `SSO_OIDC` | full-page redirect to `/callosum/v1/oidc/login` → IdP → back | cookie |
+| `EmbeddedSSO` → `EmbeddedSSO` | SSO handled **inside the iframe** (no full-page redirect) | cookie |
+
+> **Gotcha — the enum keys are NOT the values.** `AuthType.SSO === 'SSO_SAML'` and
+> `AuthType.OIDC === 'SSO_OIDC'`. You must pass the **value** to `init({ authType })`.
+> Passing the key string (`'SSO'` / `'OIDC'`) makes the SDK not recognise the type,
+> so it silently skips the SSO flow (no `isLoggedIn` check, no redirect) and loads
+> an unauthenticated iframe → `UNAUTHENTICATED_FAILURE`. The playground resolves the
+> dropdown through the real `AuthType` enum so the value is always correct.
 
 ### 2a. `None`
 SDK does no login. TSE relies on an existing cluster session cookie reaching the
@@ -90,6 +160,26 @@ Dev/testing only — you're putting cluster credentials in browser JS.
 ### 2e / 2f. `SAML` and `OIDC` (redirect SSO) — full sequence below
 Both do a **top-level page redirect** (`window.location.href = ssoURL`), not an
 iframe navigation. OIDC is the IAM-v2 path (`OIDCClient` on the backend).
+
+### 2g. `EmbeddedSSO` (SSO handled inside the iframe)
+Instead of the SDK driving a top-level redirect, the **embedded TSE app performs
+the SSO itself, inside the iframe**. The intended payoff: if an IdP session
+already exists, auth completes **silently** (no redirect, no login UI).
+
+- **Requires the IdP setup in §0.2** (iframe embedding + Trusted Origins). Without
+  it the framed IdP login shows **"refused to connect"** (`frame-ancestors 'self'`).
+- **First-login lands on Home unless you render *after* auth.** The SDK navigates to
+  your content only once, right after the embed container loads
+  (`executeAfterEmbedContainerLoaded → navigateToLiveboard`). If the container
+  loads *before* auth completes, the in-iframe auth redirect throws that navigation
+  away and TSE ends on Home/full-app. **Fix (implemented in the playground): for
+  EmbeddedSSO, call `init()` and wait for the auth emitter's `SUCCESS`/`SDK_SUCCESS`
+  before creating the embed** — so the container loads already authenticated and the
+  navigate sticks, loading the Liveboard/Answer/Search directly. All other auth
+  types render immediately. (See `renderEmbed` gating in `index.html`.)
+- The deep-link route lives in the URL **fragment** (`#/embed/viz/<id>`), which
+  doesn't survive the OAuth redirect — which is *why* rendering after auth (not
+  reconstructing the fragment) is the reliable fix.
 
 ---
 

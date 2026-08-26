@@ -111,7 +111,7 @@ live site is behind; the deployed site is always whatever is on GitHub `main`.
 
 The cluster must be told to trust the origin the app is served from, or the
 browser will refuse to frame it / call it. In **Develop → Customizations →
-Security settings** add the origin to both allowlists:
+Security settings** add the origin to these allowlists:
 
 | Serving the app from | Origin to allowlist |
 |---|---|
@@ -120,10 +120,16 @@ Security settings** add the origin to both allowlists:
 
 - **CSP visual embed hosts** (controls `frame-ancestors`) — add the origin.
 - **CORS allowlist** — add the same origin.
+- **Redirect / trusted redirect domains** — add the same origin. Needed for
+  **SSO/OIDC/EmbeddedSSO**, or login fails with *"Target URL domain … invalid or
+  not whitelisted."*
 
-Add whichever origin(s) you actually test from. Without this the iframe loads a
-blank/blocked page and you'll see CSP errors in the console — that's expected,
-not a bug in this app.
+Use the full origin (scheme + host, no trailing path). Without CSP/CORS the iframe
+loads blank with CSP errors — expected, not a bug in this app.
+
+**More setup depends on the auth type** (cookie `SameSite=None` for cookie-based
+flows; **IdP iframe embedding + Trusted Origins** for EmbeddedSSO). The full
+cluster + IdP prerequisite matrix is in [`AUTH.md` §0](./AUTH.md#0-prerequisites-cluster-and-idp-setup).
 
 ## Auth types — what each one does
 
