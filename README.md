@@ -45,8 +45,9 @@ maintain. Pick a version and the app re-imports that exact build from the CDN;
 
 The **Auth type** dropdown is then populated **from that SDK's own `AuthType`
 enum**, so the list always matches the version you loaded. This matters because
-support changes across versions — e.g. `EmbeddedSSO` is present in older builds
-but dropped in newer ones. Load an older version to get it back.
+support changes across versions — e.g. `EmbeddedSSO` only exists from SDK **1.17**
+onward, so it won't appear on older builds. Whatever a version exposes is exactly
+what you see.
 
 Because the options are built from the enum, each option's value is the SDK's
 **actual enum value** (e.g. `SSO_SAML`, `SSO_OIDC`), not the enum key — which
@@ -127,7 +128,7 @@ Security settings** add the origin to these allowlists:
 | Serving the app from | Origin to allowlist |
 |---|---|
 | Production (deployed) | `https://embed.app.thoughtspotdev.cloud` |
-| Local dev | `http://localhost:8000` |
+| Local dev (Vite) | `http://localhost:5173` |
 
 - **CSP visual embed hosts** (controls `frame-ancestors`) — add the origin.
 - **CORS allowlist** — add the same origin.

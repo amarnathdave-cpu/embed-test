@@ -16,7 +16,7 @@ Before *any* auth type renders in an embed, the **embedding origin** must be
 trusted in several places. Miss one and you get a different, confusing failure.
 Everything below uses the full origin — **scheme + host, no path, no trailing
 slash** (`http` ≠ `https`). Examples use the deployed origin
-`https://embed.app.thoughtspotdev.cloud`; for local dev use `http://localhost:8000`.
+`https://embed.app.thoughtspotdev.cloud`; for local dev use `http://localhost:5173` (Vite).
 
 ### 0.1 Cluster — Develop → Customizations → Security settings
 

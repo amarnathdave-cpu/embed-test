@@ -11,7 +11,7 @@ lookup.
 
 | Actor | Where it runs | What it is |
 |---|---|---|
-| **Host app** | top-level page, e.g. `https://customer.com` or `http://localhost:8000` | your site — the *parent* of the iframe |
+| **Host app** | top-level page, e.g. `https://customer.com` or `http://localhost:5173` | your site — the *parent* of the iframe |
 | **Visual Embed SDK** | in the **host app** (parent) | JS you call `init()` on; does auth *before* the iframe, talks to the iframe over `postMessage` |
 | **TSE** (ThoughtSpot Embedded app) | inside the **iframe**, origin = the cluster | the actual ThoughtSpot web app (blink-v2 / prism) rendered in the frame |
 | **callosum** | the cluster backend | issues/validates the session, sets the cookie (`HTTPLogin`, `OIDCClient`) |
