@@ -6,3 +6,5 @@ node_modules/
 .env*
 *.zip
 *.har
+dist
+.idea/

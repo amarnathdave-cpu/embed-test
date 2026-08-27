@@ -1,0 +1,17 @@
+{
+  "name": "ts-embed-playground",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A TypeScript playground for the ThoughtSpot Visual Embed SDK.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
+  }
+}

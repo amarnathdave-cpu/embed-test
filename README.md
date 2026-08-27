@@ -1,25 +1,33 @@
 # ThoughtSpot Embed Playground
 
-A single-page, build-free playground for exploring the [ThoughtSpot Visual Embed
+A **TypeScript** playground for exploring the [ThoughtSpot Visual Embed
 SDK](https://github.com/thoughtspot/visual-embed-sdk) against **any** cluster.
 Switch auth types, try each embed type, and watch the auth/cookie/iframe events
 live — designed for learning how embedding + cookie propagation actually behave.
 
-The SDK is loaded at runtime from the jsDelivr ESM CDN via a **dynamic `import()`**,
-so there is **no build step and no `npm install`** for the app itself — and you can
+Built with **Vite + TypeScript**, split into small per-concern modules under
+[`src/`](#project-structure). The ThoughtSpot SDK itself is **not** bundled — it's
+loaded at runtime from the jsDelivr CDN via a dynamic `import()`, so you can
 **switch SDK versions from the UI** (see below).
 
 ## Run it
 
-Serve the folder over HTTP (embedding does not work from a `file://` URL):
-
 ```bash
 cd ts-embed-playground
-python3 -m http.server 8000
-#   or:  npx serve .
+npm install
+npm run dev        # Vite dev server with hot reload → http://localhost:5173
 ```
 
-Open <http://localhost:8000>.
+Other scripts:
+
+```bash
+npm run build      # type-check (tsc --noEmit) + production build → dist/
+npm run preview    # serve the production build locally
+npm run typecheck  # type-check only
+```
+
+Open the URL Vite prints (default <http://localhost:5173>). Embedding does not work
+from a `file://` URL, which is why you serve it over HTTP.
 
 ## SDK version selector & dynamic auth types
 
@@ -66,9 +74,10 @@ command to remember.
 ### The everyday loop
 
 ```bash
-# 1. Edit the app (index.html is the whole thing)
-#    Preview locally first:
-python3 -m http.server 8000        # → http://localhost:8000
+# 1. Edit the source under src/ and preview locally:
+npm run dev                        # → http://localhost:5173
+#    (optional) verify the production build:
+npm run build && npm run preview
 
 # 2. Commit
 git add -A
@@ -78,8 +87,10 @@ git commit -m "Describe your change"
 git push
 ```
 
-Within a few seconds of the push, Vercel builds and updates
-<https://embed.app.thoughtspotdev.cloud>. Hard-refresh (empty cache) to see it.
+On each push Vercel runs `npm run build` (Vite) and serves `dist/` at
+<https://embed.app.thoughtspotdev.cloud> within a few seconds. Hard-refresh (empty
+cache) to see it. The build config lives in [`vercel.json`](./vercel.json)
+(`framework: vite`, `outputDirectory: dist`).
 
 ### Safer: preview before it goes live
 
@@ -195,8 +206,31 @@ While the page is open, `window.tsEmbed` is the current embed instance and
 selected) — `init`, `logout`, `AuthType`, `AuthStatus`, `EmbedEvent`, `HostEvent`,
 the embed classes, etc. — for live experimentation.
 
-## Files
+## Project structure
 
-- `index.html` — the entire app (config panel, embed host, event log).
-- `token-server.mjs` — optional zero-dependency trusted-token minter for the
-  cookieless/token auth flows.
+The app is split into small per-concern TypeScript modules under `src/`:
+
+```
+index.html            markup shell (imports /src/main.ts)
+vite.config.ts        Vite config    tsconfig.json   TS config
+vercel.json           Vercel build (framework: vite, outputDirectory: dist)
+src/
+  main.ts             entry point — wires events, boots, run/logout flows
+  styles.css          all styles
+  dom.ts              typed element helpers ($, $i, $s, $b, esc, setDot)
+  log.ts              the event log (Events tab)
+  store.ts            localStorage persistence + SSO loop-guard key
+  sdk.ts              dynamic SDK loading + npm-registry version list
+  authTypes.ts        AuthType metadata + populating the dropdown from the SDK
+  embedConfig.ts      buildConfig(embedConfig) + embedOptions(viewConfig)
+  form.ts             dynamic sidebar form (show/hide fieldsets, labels)
+  configView.ts       live "SDK config" viewer (SDK config tab)
+  tabs.ts             bottom-panel tab switching
+  auth.ts             wires the init() auth emitter (parent-window auth stream)
+  embed.ts            creates/renders the embed + iframe lifecycle events
+  types.ts            shared types (SDKModule, EmbedConfig, …)
+token-server.mjs      optional zero-dependency trusted-token minter (Node)
+```
+
+`token-server.mjs` is standalone (run with `node`, see [Exploring the cookieless
+path](#exploring-the-cookieless-path)); it is not part of the Vite build.

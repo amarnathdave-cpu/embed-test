@@ -176,7 +176,7 @@ already exists, auth completes **silently** (no redirect, no login UI).
   EmbeddedSSO, call `init()` and wait for the auth emitter's `SUCCESS`/`SDK_SUCCESS`
   before creating the embed** — so the container loads already authenticated and the
   navigate sticks, loading the Liveboard/Answer/Search directly. All other auth
-  types render immediately. (See `renderEmbed` gating in `index.html`.)
+  types render immediately. (See the run flow in `src/main.ts` + `src/embed.ts`.)
 - The deep-link route lives in the URL **fragment** (`#/embed/viz/<id>`), which
   doesn't survive the OAuth redirect — which is *why* rendering after auth (not
   reconstructing the fragment) is the reliable fix.
