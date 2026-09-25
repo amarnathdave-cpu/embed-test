@@ -10,7 +10,7 @@ const CDN = (v: string): string => `https://cdn.jsdelivr.net/npm/${PKG}@${v}/dis
 const DATA_API = `https://data.jsdelivr.com/v1/packages/npm/${PKG}`; // CORS-enabled versions list
 export const DEFAULT_VERSION = '1.51.0';
 // Used only if the registry can't be reached (offline / API down).
-const FALLBACK_VERSIONS = ['1.51.0', '1.42.0', '1.36.2', '1.31.0', '1.28.4', '1.25.0'];
+const FALLBACK_VERSIONS = ['1.52.2-beta', '1.52.1', '1.51.0', '1.42.0', '1.36.2', '1.31.0', '1.28.4', '1.25.0'];
 
 let sdk: SDKModule | null = null;
 let allVersions: string[] = [];
@@ -57,7 +57,8 @@ export async function fetchVersions(): Promise<boolean> {
 export function populateVersions(preferred?: string): void {
   const sel = $s('sdkVersion');
   const includePre = $i('includePre').checked;
-  const list = allVersions.filter((v) => includePre || !v.includes('-'));
+  // Pre-releases are hidden by default, except ones ahead of the latest stable (e.g. 1.52.2-beta).
+  const list = allVersions.filter((v) => includePre || !v.includes('-') || isAheadOfLatest(v));
   if (preferred && !list.includes(preferred)) list.unshift(preferred); // keep a saved/custom pick visible
   sel.innerHTML = '';
   for (const v of list) {
@@ -68,11 +69,19 @@ export function populateVersions(preferred?: string): void {
   }
   const want = preferred && list.includes(preferred) ? preferred : list.includes(latest) ? latest : list[0];
   if (want) sel.value = want;
-  const hidden = allVersions.filter((v) => v.includes('-')).length;
+  const hidden = allVersions.filter((v) => v.includes('-') && !isAheadOfLatest(v)).length;
   $('versionHint').textContent =
     `${list.length} versions from the npm registry (newest first)` +
     (includePre ? '' : ` · ${hidden} pre-releases hidden`) +
     '. Auth types reflect the loaded version.';
+}
+
+/** True if the version's x.y.z core is newer than the latest stable's. */
+function isAheadOfLatest(v: string): boolean {
+  const core = (s: string) => s.split('-')[0].split('.').map(Number);
+  const a = core(v), b = core(latest);
+  for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0);
+  return false;
 }
 
 function errMsg(e: unknown): string {
