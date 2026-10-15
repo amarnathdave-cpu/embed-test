@@ -10,7 +10,7 @@ const CDN = (v: string): string => `https://cdn.jsdelivr.net/npm/${PKG}@${v}/dis
 const DATA_API = `https://data.jsdelivr.com/v1/packages/npm/${PKG}`; // CORS-enabled versions list
 export const DEFAULT_VERSION = '1.51.0';
 // Used only if the registry can't be reached (offline / API down).
-const FALLBACK_VERSIONS = ['1.52.2-beta', '1.52.1', '1.51.0', '1.42.0', '1.36.2', '1.31.0', '1.28.4', '1.25.0'];
+const FALLBACK_VERSIONS = ['1.53.2-beta','1.52.2-beta', '1.52.1', '1.51.0', '1.42.0', '1.36.2', '1.31.0', '1.28.4', '1.25.0'];
 
 let sdk: SDKModule | null = null;
 let allVersions: string[] = [];
